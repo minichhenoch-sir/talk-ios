@@ -484,6 +484,9 @@
 /* No comment provided by engineer. */
 "Away" = "Away";
 
+/* No comment provided by engineer. */
+"Back 15 seconds" = "Back 15 seconds";
+
 /* Ban a user/guest */
 "Ban" = "Ban";
 
@@ -633,6 +636,9 @@
 
 /* No comment provided by engineer. */
 "Close" = "Close";
+
+/* No comment provided by engineer. */
+"Close player" = "Close player";
 
 /* Code block */
 "Code" = "Code";
@@ -1250,6 +1256,9 @@
 "Forward" = "Forward";
 
 /* No comment provided by engineer. */
+"Forward 15 seconds" = "Forward 15 seconds";
+
+/* No comment provided by engineer. */
 "Forward to" = "Forward to";
 
 /* 'From' which language user wants to translate text */
@@ -1670,6 +1679,9 @@
 /* Placeholder for the name of a new tag */
 "New tag" = "New tag";
 
+/* No comment provided by engineer. */
+"Next" = "Next";
+
 /* Remind me next week about that message */
 "Next week" = "Next week";
 
@@ -1832,6 +1844,9 @@
 /* No comment provided by engineer. */
 "Open in Maps" = "Open in Maps";
 
+/* No comment provided by engineer. */
+"Opens the player" = "Opens the player";
+
 /* A menu to show additional options for the current conversation */
 "Option menu" = "Option menu";
 
@@ -1885,6 +1900,9 @@
 "Password protection" = "Password protection";
 
 /* No comment provided by engineer. */
+"Pause" = "Pause";
+
+/* No comment provided by engineer. */
 "Pending invitations" = "Pending invitations";
 
 /* No comment provided by engineer. */
@@ -1924,6 +1942,12 @@
 "Play" = "Play";
 
 /* No comment provided by engineer. */
+"Playback position" = "Playback position";
+
+/* No comment provided by engineer. */
+"Playback speed" = "Playback speed";
+
+/* No comment provided by engineer. */
 "Please check that you entered a valid server address." = "Please check that you entered a valid server address.";
 
 /* No comment provided by engineer. */
@@ -1961,6 +1985,9 @@
 
 /* No comment provided by engineer. */
 "Preview" = "Preview";
+
+/* No comment provided by engineer. */
+"Previous" = "Previous";
 
 /* No comment provided by engineer. */
 "Privacy" = "Privacy";
@@ -2066,6 +2093,15 @@
 
 /* No comment provided by engineer. */
 "Rename tag" = "Rename tag";
+
+/* No comment provided by engineer. */
+"Repeat all" = "Repeat all";
+
+/* No comment provided by engineer. */
+"Repeat off" = "Repeat off";
+
+/* No comment provided by engineer. */
+"Repeat one" = "Repeat one";
 
 /* Replacement in case of out of office */
 "Replacement" = "Replacement";
@@ -2273,7 +2309,13 @@
 "Short absence status is too long" = "Short absence status is too long";
 
 /* No comment provided by engineer. */
+"Show message" = "Show message";
+
+/* No comment provided by engineer. */
 "Show more…" = "Show more…";
+
+/* No comment provided by engineer. */
+"Shuffle" = "Shuffle";
 
 /* No comment provided by engineer. */
 "Signaling" = "Signaling";
@@ -2417,6 +2459,15 @@
 "The app is too old and no longer supported by this server." = "The app is too old and no longer supported by this server.";
 
 /* No comment provided by engineer. */
+"The audio could not be loaded. Check your internet connection." = "The audio could not be loaded. Check your internet connection.";
+
+/* No comment provided by engineer. */
+"The audio could not be played" = "The audio could not be played";
+
+/* No comment provided by engineer. */
+"The audio file is no longer available" = "The audio file is no longer available";
+
+/* No comment provided by engineer. */
 "The call for this event ended. Do you want to delete this conversation for everyone?" = "The call for this event ended. Do you want to delete this conversation for everyone?";
 
 /* No comment provided by engineer. */
@@ -2439,6 +2490,9 @@
 
 /* No comment provided by engineer. */
 "There is no account for user %@ in server %@ configured in this app." = "There is no account for user %1$@ in server %2$@ configured in this app.";
+
+/* No comment provided by engineer. */
+"This audio format is not supported" = "This audio format is not supported";
 
 /* No comment provided by engineer. */
 "This call is being recorded" = "This call is being recorded";
@@ -2661,6 +2715,9 @@
 
 /* Conversation visibility settings */
 "Visibility" = "Visibility";
+
+/* No comment provided by engineer. */
+"Voice message" = "Voice message";
 
 /* No comment provided by engineer. */
 "Voice messages" = "Voice messages";

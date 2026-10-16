@@ -42,18 +42,18 @@ extension BaseChatTableViewCell {
     }
 
     func audioPlayerPauseButtonPressed() {
-        guard let audioFileParameter = message?.file() else {
+        guard let message else {
             return
         }
 
-        self.delegate?.cellWants(toPauseAudioFile: audioFileParameter)
+        self.delegate?.cellWants(toPauseAudioFile: message)
     }
 
     func audioPlayerProgressChanged(progress: CGFloat) {
-        guard let audioFileParameter = message?.file() else {
+        guard let message else {
             return
         }
 
-        self.delegate?.cellWants(toChangeProgress: progress, fromAudioFile: audioFileParameter)
+        self.delegate?.cellWants(toChangeProgress: progress, fromAudioFile: message)
     }
 }

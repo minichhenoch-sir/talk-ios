@@ -708,7 +708,6 @@ import SwiftUI
         super.viewWillDisappear(animated)
 
         self.saveLastReadMessage()
-        self.stopVoiceMessagePlayer()
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
@@ -1245,52 +1244,6 @@ import SwiftUI
         let navController = NCNavigationController(rootViewController: chatViewController)
         navController.presentationController?.delegate = chatViewController
         self.present(navController, animated: true)
-    }
-
-    // MARK: - Voice message player
-    // Override the default implementation to don't hijack the audio session when presented in a call
-
-    override func playVoiceMessagePlayer() {
-        if !self.presentedInCall {
-            self.setSpeakerAudioSession()
-            self.enableProximitySensor()
-        }
-
-        self.startVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.play()
-    }
-
-    override func pauseVoiceMessagePlayer() {
-        if !self.presentedInCall {
-            self.disableProximitySensor()
-        }
-
-        self.stopVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.pause()
-        self.checkVisibleCellAudioPlayers()
-    }
-
-    override func stopVoiceMessagePlayer() {
-        if !self.presentedInCall {
-            self.disableProximitySensor()
-        }
-
-        self.stopVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.stop()
-    }
-
-    override func sensorStateChange(notification: Notification) {
-        if self.presentedInCall {
-            return
-        }
-
-        if UIDevice.current.proximityState {
-            self.setVoiceChatAudioSession()
-        } else {
-            self.pauseVoiceMessagePlayer()
-            self.setSpeakerAudioSession()
-            self.disableProximitySensor()
-        }
     }
 
     // MARK: - UIScrollViewDelegate methods

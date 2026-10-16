@@ -30,7 +30,6 @@ import Toast
                                                   QLPreviewControllerDataSource,
                                                   ShareConfirmationViewControllerDelegate,
                                                   AVAudioRecorderDelegate,
-                                                  AVAudioPlayerDelegate,
                                                   SystemMessageTableViewCellDelegate,
                                                   BaseChatTableViewCellDelegate,
                                                   UITableViewDataSourcePrefetching,
@@ -49,7 +48,6 @@ import Toast
     internal var dismissNotificationsOnViewWillDisappear = true
 
     internal var replyMessageView: ReplyMessageView?
-    internal var voiceMessagesPlayer: AVAudioPlayer?
     internal var interactingMessage: NCChatMessage?
     internal var lastMessageBeforeInteraction: IndexPath?
     internal var contextMenuActionBlock: (() -> Void)?
@@ -109,8 +107,7 @@ import Toast
     private var isPreviewControllerShown: Bool = false
     private var previewControllerFilePath: String?
 
-    private var playerProgressTimer: Timer?
-    private var playerAudioFileStatus: NCChatFileStatus?
+    private lazy var audioPlayerBarHost = ChatAudioPlayerBarHost(viewController: self)
 
     private var photoPicker: PHPickerViewController?
 
@@ -276,6 +273,13 @@ import Toast
 
         // Set delegate to retrieve typing events
         self.tableView?.separatorStyle = .none
+
+        // Audio keeps playing when leaving the chat, so its state is observed instead of owned
+        self.audioPlayerBarHost.install()
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerStateDidChange(notification:)), name: .ChatAudioPlayerStateDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerStateDidChange(notification:)), name: .ChatAudioPlayerProgressDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerStateDidChange(notification:)), name: .ChatAudioPlayerMetadataDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerCannotPlayFormat(notification:)), name: .ChatAudioPlayerCannotPlayFormat, object: nil)
 
         if #available(iOS 26.0, *) {
             // Our date headers make UIKit choose a hard edge, drawing a border below the navigation bar
@@ -2147,6 +2151,8 @@ import Toast
 
     func handleRecord(isRecording: Bool) {
         if isRecording {
+            ChatAudioPlayer.shared.pause()
+
             if let recorder = self.recorder, !recorder.isRecording {
                 let session = AVAudioSession.sharedInstance()
                 try? session.setActive(true)
@@ -2215,6 +2221,7 @@ import Toast
     }
 
     func startRecordingVoiceMessage() {
+        ChatAudioPlayer.shared.pause()
         self.setupAudioRecorder()
         self.showVoiceMessageRecordingView()
         if let recorder = self.recorder, !recorder.isRecording {
@@ -2407,125 +2414,83 @@ import Toast
         }
     }
 
-    // MARK: - Voice Message Player
+    // MARK: - Chat audio player
 
-    func setupVoiceMessagePlayer(with fileStatus: NCChatFileStatus) {
-        guard let fileLocalPath = fileStatus.fileLocalPath,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: fileLocalPath)),
-              let player = try? AVAudioPlayer(data: data)
+    /// The audio messages of this chat that are loaded, oldest first.
+    private func loadedAudioMessages() -> [NCChatMessage] {
+        return self.dateSections.flatMap { self.messages[$0] ?? [] }.filter { $0.chatAudioKind != nil && !$0.isDeletedMessage }
+    }
+
+    func playAudio(of message: NCChatMessage) {
+        let player = ChatAudioPlayer.shared
+
+        // Recording and playing at the same time is not possible
+        guard self.recorder?.isRecording != true else { return }
+
+        guard let selection = ChatAudioQueue.build(messages: self.loadedAudioMessages(), startId: message.messageId, idOf: { $0.messageId }, kindOf: { $0.chatAudioKind }) else {
+            // Messages not in the loaded history, e.g. a temporary one, are played on their own
+            guard let track = message.chatAudioTrack(for: self.account) else { return }
+            player.play(queue: [track], startIndex: 0)
+            return
+        }
+
+        var tracks: [ChatAudioTrack] = []
+        var startIndex = 0
+
+        for (index, queueMessage) in selection.items.enumerated() {
+            guard let track = queueMessage.chatAudioTrack(for: self.account) else { continue }
+
+            if index == selection.startIndex {
+                startIndex = tracks.count
+            }
+
+            tracks.append(track)
+        }
+
+        guard tracks.indices.contains(startIndex), tracks[startIndex].key.messageId == message.messageId else { return }
+
+        player.play(queue: tracks, startIndex: startIndex)
+    }
+
+    func updateAudioPlayerView(of cell: BaseChatTableViewCell, for message: NCChatMessage) {
+        guard let audioPlayerView = cell.audioPlayerView,
+              let track = message.chatAudioTrack(for: self.account)
+        else {
+            cell.audioPlayerView?.resetPlayer()
+            return
+        }
+
+        ChatAudioPlayer.shared.requestWaveform(for: track)
+        audioPlayerView.apply(ChatAudioPlayer.shared.messageState(for: track.key))
+    }
+
+    /// Formats the audio player can't play still open in QuickLook or VLC.
+    func audioPlayerCannotPlayFormat(notification: Notification) {
+        guard self.isVisible,
+              let key = notification.userInfo?["key"] as? ChatAudioKey,
+              key.accountId == self.account.accountId, key.roomToken == self.room.token,
+              let message = self.indexPathAndMessage(forMessageId: key.messageId)?.message
         else { return }
 
-        self.voiceMessagesPlayer = player
-        self.playerAudioFileStatus = fileStatus
-        player.delegate = self
-        self.playVoiceMessagePlayer()
-    }
+        ChatAudioPlayer.shared.close()
 
-    func playVoiceMessagePlayer() {
-        self.setSpeakerAudioSession()
-        self.enableProximitySensor()
-
-        self.startVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.play()
-    }
-
-    func pauseVoiceMessagePlayer() {
-        self.disableProximitySensor()
-
-        self.stopVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.pause()
-        self.checkVisibleCellAudioPlayers()
-    }
-
-    func stopVoiceMessagePlayer() {
-        self.disableProximitySensor()
-
-        self.stopVoiceMessagePlayerTimer()
-        self.voiceMessagesPlayer?.stop()
-    }
-
-    func enableProximitySensor() {
-        NotificationCenter.default.addObserver(self, selector: #selector(sensorStateChange(notification:)), name: UIDevice.proximityStateDidChangeNotification, object: nil)
-        UIDevice.current.isProximityMonitoringEnabled = true
-    }
-
-    func disableProximitySensor() {
-        if UIDevice.current.proximityState == false {
-            // Only disable monitoring if proximity sensor state is not active.
-            // If not proximity sensor state is cached as active and next time we enable monitoring
-            // sensorStateChange won't be trigger until proximity sensor state changes to inactive.
-            NotificationCenter.default.removeObserver(self, name: UIDevice.proximityStateDidChangeNotification, object: nil)
-            UIDevice.current.isProximityMonitoringEnabled = false
+        self.downloadFile(for: message) { [weak self] fileStatus in
+            self?.previewFile(with: fileStatus)
         }
     }
 
-    func setSpeakerAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(AVAudioSession.Category.playback)
-        try? session.setActive(true)
-    }
-
-    func setVoiceChatAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(AVAudioSession.Category.playAndRecord, mode: AVAudioSession.Mode.voiceChat)
-        try? session.setActive(true)
-    }
-
-    func sensorStateChange(notification: Notification) {
-        if UIDevice.current.proximityState {
-            self.setVoiceChatAudioSession()
-        } else {
-            self.pauseVoiceMessagePlayer()
-            self.setSpeakerAudioSession()
-            self.disableProximitySensor()
-        }
-    }
-
-    func checkVisibleCellAudioPlayers() {
-        guard let tableView = self.tableView,
-              let indexPaths = tableView.indexPathsForVisibleRows,
-              let playerAudioFileStatus = self.playerAudioFileStatus,
-              let voiceMessagesPlayer = self.voiceMessagesPlayer
-        else { return }
+    func audioPlayerStateDidChange(notification: Notification) {
+        guard let tableView = self.tableView, let indexPaths = tableView.indexPathsForVisibleRows else { return }
 
         for indexPath in indexPaths {
-            let sectionDate = self.dateSections[indexPath.section]
+            guard let messages = self.messages[self.dateSections[indexPath.section]],
+                  messages.indices.contains(indexPath.row),
+                  messages[indexPath.row].isVoiceMessage,
+                  let cell = tableView.cellForRow(at: indexPath) as? BaseChatTableViewCell
+            else { continue }
 
-            if let messages = self.messages[sectionDate] {
-                let message = messages[indexPath.row]
-
-                if message.isVoiceMessage {
-                    guard let cell = tableView.cellForRow(at: indexPath) as? BaseChatTableViewCell,
-                          let file = message.file()
-                    else { continue }
-
-                    if file.parameterId == playerAudioFileStatus.fileId, file.path == playerAudioFileStatus.filePath {
-                        cell.audioPlayerView?.setPlayerProgress(voiceMessagesPlayer.currentTime, isPlaying: voiceMessagesPlayer.isPlaying, maximumValue: voiceMessagesPlayer.duration)
-                        continue
-                    }
-
-                    cell.audioPlayerView?.resetPlayer()
-                }
-            }
+            self.updateAudioPlayerView(of: cell, for: messages[indexPath.row])
         }
-    }
-
-    func startVoiceMessagePlayerTimer() {
-        self.stopVoiceMessagePlayerTimer()
-        self.playerProgressTimer = Timer.scheduledTimer(timeInterval: 0.05, target: self, selector: #selector(checkVisibleCellAudioPlayers), userInfo: nil, repeats: true)
-    }
-
-    func stopVoiceMessagePlayerTimer() {
-        self.playerProgressTimer?.invalidate()
-        self.playerProgressTimer = nil
-    }
-
-    // MARK: - AVAudioPlayer Delegate
-
-    public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        self.stopVoiceMessagePlayerTimer()
-        self.checkVisibleCellAudioPlayers()
-        self.disableProximitySensor()
     }
 
     // MARK: - Gesture recognizer
@@ -3549,18 +3514,7 @@ import Toast
             if let cell = self.tableView?.dequeueReusableCell(withIdentifier: cellIdentifier) as? BaseChatTableViewCell {
                 cell.delegate = self
                 cell.setup(for: message, inRoom: self.room, forThread: self.thread, withAccount: self.account)
-
-                if let playerAudioFileStatus = self.playerAudioFileStatus,
-                   let voiceMessagesPlayer = self.voiceMessagesPlayer {
-
-                    if message.file().parameterId == playerAudioFileStatus.fileId, message.file().path == playerAudioFileStatus.filePath {
-                        cell.audioPlayerView?.setPlayerProgress(voiceMessagesPlayer.currentTime, isPlaying: voiceMessagesPlayer.isPlaying, maximumValue: voiceMessagesPlayer.duration)
-                    } else {
-                        cell.audioPlayerView?.resetPlayer()
-                    }
-                } else {
-                    cell.audioPlayerView?.resetPlayer()
-                }
+                self.updateAudioPlayerView(of: cell, for: message)
 
                 return cell
             }
@@ -4221,6 +4175,12 @@ import Toast
             return
         }
 
+        // Audio files play in the chat's audio player, together with the other audio files of the chat
+        if message.chatAudioKind == .audioFile {
+            self.playAudio(of: message)
+            return
+        }
+
         let filePath = fileParameter.path ?? ""
         let fileExtension = URL(fileURLWithPath: filePath).pathExtension.lowercased()
 
@@ -4282,55 +4242,22 @@ import Toast
     // MARK: - VoiceMessageTableViewCellDelegate
 
     public func cellWants(toPlayAudioFile message: NCChatMessage) {
-        guard let fileParameter = message.file() else {
-            print("No file for message found")
-            return
-        }
+        self.playAudio(of: message)
+    }
 
-        // Resume an already loaded voice message
-        if let voiceMessagesPlayer = self.voiceMessagesPlayer,
-           let playerAudioFileStatus = self.playerAudioFileStatus,
-           !voiceMessagesPlayer.isPlaying,
-           fileParameter.parameterId == playerAudioFileStatus.fileId,
-           fileParameter.path == playerAudioFileStatus.filePath {
+    public func cellWants(toPauseAudioFile message: NCChatMessage) {
+        let player = ChatAudioPlayer.shared
 
-            self.playVoiceMessagePlayer()
-            return
-        }
-
-        // Temporary voice messages are played from their local file
-        if let fileStatus = fileParameter.fileStatus,
-           let fileLocalPath = fileStatus.fileLocalPath,
-           FileManager.default.fileExists(atPath: fileLocalPath) {
-
-            self.setupVoiceMessagePlayer(with: fileStatus)
-            return
-        }
-
-        self.downloadFile(for: message) { [weak self] fileStatus in
-            self?.setupVoiceMessagePlayer(with: fileStatus)
+        if let key = message.chatAudioKey(accountId: self.account.accountId), player.isCurrent(key) {
+            player.pause()
         }
     }
 
-    public func cellWants(toPauseAudioFile fileParameter: NCMessageFileParameter) {
-        if let voiceMessagesPlayer = self.voiceMessagesPlayer,
-           let playerAudioFileStatus = self.playerAudioFileStatus,
-           voiceMessagesPlayer.isPlaying,
-           fileParameter.parameterId == playerAudioFileStatus.fileId,
-           fileParameter.path == playerAudioFileStatus.filePath {
+    public func cellWants(toChangeProgress progress: CGFloat, fromAudioFile message: NCChatMessage) {
+        let player = ChatAudioPlayer.shared
 
-            self.pauseVoiceMessagePlayer()
-        }
-    }
-
-    public func cellWants(toChangeProgress progress: CGFloat, fromAudioFile fileParameter: NCMessageFileParameter) {
-        if let playerAudioFileStatus = self.playerAudioFileStatus,
-           fileParameter.parameterId == playerAudioFileStatus.fileId,
-           fileParameter.path == playerAudioFileStatus.filePath {
-
-            self.pauseVoiceMessagePlayer()
-            self.voiceMessagesPlayer?.currentTime = progress
-            self.checkVisibleCellAudioPlayers()
+        if let key = message.chatAudioKey(accountId: self.account.accountId), player.isCurrent(key) {
+            player.seek(to: TimeInterval(progress))
         }
     }
 

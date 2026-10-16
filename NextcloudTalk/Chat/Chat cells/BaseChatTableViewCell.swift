@@ -19,8 +19,8 @@ protocol BaseChatTableViewCellDelegate: AnyObject {
     func cellWants(toOpenLocation geoLocationRichObject: GeoLocationRichObject)
 
     func cellWants(toPlayAudioFile message: NCChatMessage)
-    func cellWants(toPauseAudioFile fileParameter: NCMessageFileParameter)
-    func cellWants(toChangeProgress progress: CGFloat, fromAudioFile fileParameter: NCMessageFileParameter)
+    func cellWants(toPauseAudioFile message: NCChatMessage)
+    func cellWants(toChangeProgress progress: CGFloat, fromAudioFile message: NCChatMessage)
 
     func cellWants(toOpenPoll poll: NCMessageParameter)
 

@@ -70,6 +70,8 @@ class RoomsTableViewController: UITableViewController, CCCertificateDelegate, UI
     private var activeContextMenuInteraction: ContextMenuInteraction?
     private var pendingRoomListRefresh = false
 
+    private lazy var audioPlayerBarHost = ChatAudioPlayerBarHost(viewController: self)
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -305,6 +307,10 @@ class RoomsTableViewController: UITableViewController, CCCertificateDelegate, UI
 
         refreshRoomList()
 
+        // The player bar stays visible after leaving a chat, also for audio of another conversation
+        audioPlayerBarHost.installBelowNavigationBar()
+        audioPlayerBarHost.isSuspended = false
+
         self.clearsSelectionOnViewWillAppear = self.splitViewController?.isCollapsed ?? false
 
         if self.splitViewController?.isCollapsed == true {
@@ -316,6 +322,9 @@ class RoomsTableViewController: UITableViewController, CCCertificateDelegate, UI
         super.viewWillDisappear(animated)
 
         stopRefreshRoomsTimer()
+
+        // A pushed chat shows its own player bar
+        audioPlayerBarHost.isSuspended = true
 
         // Reset deferred-refresh state in case the context menu was dismissed by navigating away
         // without a willEndContextMenuInteraction callback, so refreshes aren't skipped indefinitely.
