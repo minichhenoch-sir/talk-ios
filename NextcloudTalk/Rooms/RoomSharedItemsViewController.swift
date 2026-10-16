@@ -16,7 +16,6 @@ class RoomSharedItemsViewController: UIViewController,
                                      WaterfallLayoutDelegate,
                                      MediaViewerMessageSource,
                                      SharedAudioCellDelegate,
-                                     AVAudioPlayerDelegate,
                                      QLPreviewControllerDelegate,
                                      QLPreviewControllerDataSource,
                                      VLCKitVideoViewControllerDelegate {
@@ -62,11 +61,7 @@ class RoomSharedItemsViewController: UIViewController,
     private var generation = 0
     private var loadTask: URLSessionDataTask?
 
-    private var audioPlayer: AVAudioPlayer?
-    private var audioPlayerMessageId: Int?
     // The last play request, so a slow download doesn't start playing over a newer one
-    private var pendingAudioMessageId: Int?
-    private var audioProgressTimer: Timer?
 
     private var previewControllerFilePath: String = ""
     private var isPreviewControllerShown: Bool = false
@@ -160,6 +155,10 @@ class RoomSharedItemsViewController: UIViewController,
 
         NCAppBranding.styleViewController(self)
 
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerStateDidChange(_:)), name: .ChatAudioPlayerStateDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerStateDidChange(_:)), name: .ChatAudioPlayerProgressDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(audioPlayerCannotPlayTrack(_:)), name: .ChatAudioPlayerCannotPlayFormat, object: nil)
+
         self.navigationItem.title = NSLocalizedString("Shared items", comment: "")
         self.view.backgroundColor = .systemGroupedBackground
 
@@ -209,27 +208,6 @@ class RoomSharedItemsViewController: UIViewController,
         })
     }
 
-    // Not viewWillDisappear, an interactive back swipe can still be cancelled there
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-
-        // Room info is often a sheet, swiping that down only marks the presented controller further up
-        var viewController: UIViewController? = self
-        while let current = viewController {
-            if current.isMovingFromParent || current.isBeingDismissed {
-                self.stopAudio()
-                return
-            }
-
-            viewController = current.parent
-        }
-    }
-
-    deinit {
-        // A scheduled timer is kept alive by its run loop, not by us
-        self.audioProgressTimer?.invalidate()
-    }
-
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
 
@@ -273,7 +251,6 @@ class RoomSharedItemsViewController: UIViewController,
 
     func setupViewForItemType(itemType: String) {
         self.loadTask?.cancel()
-        self.stopAudio()
 
         self.generation += 1
         self.currentItemType = itemType
@@ -561,7 +538,7 @@ class RoomSharedItemsViewController: UIViewController,
 
         self.mediaViewController = mediaViewController
         self.mediaViewerReachedLoadedEnd = false
-        self.stopAudio()
+        ChatAudioPlayer.shared.pause()
         self.present(navController, interactiveDismissalType: .standard)
     }
 
@@ -594,83 +571,51 @@ class RoomSharedItemsViewController: UIViewController,
 
     // MARK: - Audio
 
+    private func audioKey(of message: NCChatMessage) -> ChatAudioKey? {
+        guard let account = self.room.account else { return nil }
+        return message.chatAudioKey(accountId: account.accountId)
+    }
+
     private func playAudio(of message: NCChatMessage) {
-        if let audioPlayer, self.audioPlayerMessageId == message.messageId {
-            // Otherwise a still running download of another file would take over once it finishes
-            self.pendingAudioMessageId = nil
-            self.startAudioPlayback(audioPlayer)
-            return
-        }
+        guard let account = self.room.account else { return }
 
-        guard let file = message.file(), let account = self.room.account else { return }
+        let player = ChatAudioPlayer.shared
+        let audioMessages = self.currentItems.filter { $0.chatAudioKind != nil }.sorted { $0.messageId < $1.messageId }
 
-        self.pendingAudioMessageId = message.messageId
+        guard let selection = ChatAudioQueue.build(messages: audioMessages, startId: message.messageId, idOf: { $0.messageId }, kindOf: { $0.chatAudioKind }) else { return }
 
-        ChatFileDownloader.shared.downloadFile(withFileId: file.parameterId, fromAccount: account) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self, self.pendingAudioMessageId == message.messageId else { return }
+        var tracks: [ChatAudioTrack] = []
+        var startIndex = 0
 
-                self.pendingAudioMessageId = nil
+        for (index, queueMessage) in selection.items.enumerated() {
+            guard let track = queueMessage.chatAudioTrack(for: account) else { continue }
 
-                switch result {
-                case .success(let fileStatus):
-                    guard let fileLocalPath = fileStatus.fileLocalPath,
-                          let data = try? Data(contentsOf: URL(fileURLWithPath: fileLocalPath)),
-                          let player = try? AVAudioPlayer(data: data)
-                    else {
-                        // Formats AVAudioPlayer can't play still open in QuickLook or VLC
-                        self.didLoadFile(with: fileStatus)
-                        return
-                    }
-
-                    self.stopAudio()
-
-                    player.delegate = self
-                    self.audioPlayer = player
-                    self.audioPlayerMessageId = message.messageId
-                    self.startAudioPlayback(player)
-                case .failure(.fileUnavailable(let errorDescription)), .failure(.downloadFailed(let errorDescription)):
-                    self.didFailLoadingFile(with: errorDescription)
-                case .failure(.cancelled):
-                    break
-                }
+            if index == selection.startIndex {
+                startIndex = tracks.count
             }
+
+            tracks.append(track)
         }
+
+        guard tracks.indices.contains(startIndex), tracks[startIndex].key.messageId == message.messageId else { return }
+
+        player.play(queue: tracks, startIndex: startIndex)
     }
 
-    private func startAudioPlayback(_ player: AVAudioPlayer) {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback)
-        try? session.setActive(true)
-
-        player.play()
-
-        self.audioProgressTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.updateVisibleAudioCells()
-        }
-        // The common modes keep the progress moving while the list is scrolled
-        RunLoop.main.add(timer, forMode: .common)
-        self.audioProgressTimer = timer
-
+    @objc func audioPlayerStateDidChange(_ notification: Notification) {
         self.updateVisibleAudioCells()
     }
 
-    private func pauseAudio() {
-        self.audioPlayer?.pause()
-        self.audioProgressTimer?.invalidate()
-        self.audioProgressTimer = nil
-        self.updateVisibleAudioCells()
-    }
+    /// Formats the audio player can't play still open in QuickLook or VLC.
+    @objc func audioPlayerCannotPlayTrack(_ notification: Notification) {
+        guard self.viewIfLoaded?.window != nil,
+              let key = notification.userInfo?["key"] as? ChatAudioKey,
+              let message = self.currentItems.first(where: { self.audioKey(of: $0) == key }),
+              let file = message.file()
+        else { return }
 
-    private func stopAudio() {
-        self.pendingAudioMessageId = nil
-        self.audioPlayer?.stop()
-        self.audioPlayer = nil
-        self.audioPlayerMessageId = nil
-        self.audioProgressTimer?.invalidate()
-        self.audioProgressTimer = nil
-        self.updateVisibleAudioCells()
+        ChatAudioPlayer.shared.close()
+        self.downloadFile(file: file)
     }
 
     private func updateVisibleAudioCells() {
@@ -680,11 +625,15 @@ class RoomSharedItemsViewController: UIViewController,
     }
 
     private func updatePlayerView(of cell: SharedAudioCell) {
-        if let audioPlayer, cell.messageId != nil, cell.messageId == self.audioPlayerMessageId {
-            cell.playerView.setPlayerProgress(audioPlayer.currentTime, isPlaying: audioPlayer.isPlaying, maximumValue: audioPlayer.duration)
-        } else {
+        guard let messageId = cell.messageId,
+              let message = self.currentItems.first(where: { $0.messageId == messageId }),
+              let key = self.audioKey(of: message)
+        else {
             cell.playerView.resetPlayer()
+            return
         }
+
+        cell.playerView.apply(ChatAudioPlayer.shared.messageState(for: key))
     }
 
     func sharedAudioCellWantsToPlay(_ cell: SharedAudioCell) {
@@ -694,22 +643,19 @@ class RoomSharedItemsViewController: UIViewController,
     }
 
     func sharedAudioCellWantsToPause(_ cell: SharedAudioCell) {
-        guard cell.messageId == self.audioPlayerMessageId else { return }
+        guard let message = self.currentItems.first(where: { $0.messageId == cell.messageId }),
+              ChatAudioPlayer.shared.isCurrent(self.audioKey(of: message))
+        else { return }
 
-        self.pauseAudio()
+        ChatAudioPlayer.shared.pause()
     }
 
     func sharedAudioCell(_ cell: SharedAudioCell, wantsToSeekTo time: TimeInterval) {
-        guard let audioPlayer, cell.messageId == self.audioPlayerMessageId else { return }
+        guard let message = self.currentItems.first(where: { $0.messageId == cell.messageId }),
+              ChatAudioPlayer.shared.isCurrent(self.audioKey(of: message))
+        else { return }
 
-        audioPlayer.currentTime = time
-        self.updatePlayerView(of: cell)
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        self.audioProgressTimer?.invalidate()
-        self.audioProgressTimer = nil
-        self.updateVisibleAudioCells()
+        ChatAudioPlayer.shared.seek(to: time)
     }
 
     // MARK: - File downloader
@@ -740,7 +686,7 @@ class RoomSharedItemsViewController: UIViewController,
             guard let fileLocalPath = fileStatus.fileLocalPath else { return }
 
             // Whatever opens next plays or shows the file itself
-            self.stopAudio()
+            ChatAudioPlayer.shared.pause()
 
             self.previewControllerFilePath = fileLocalPath
             self.isPreviewControllerShown = true
@@ -1002,8 +948,8 @@ class RoomSharedItemsViewController: UIViewController,
 
         switch self.rowKind(for: message) {
         case .audio:
-            if self.audioPlayerMessageId == message.messageId, self.audioPlayer?.isPlaying == true {
-                self.pauseAudio()
+            if ChatAudioPlayer.shared.isCurrent(self.audioKey(of: message)), ChatAudioPlayer.shared.state.isPlaying {
+                ChatAudioPlayer.shared.pause()
             } else {
                 self.playAudio(of: message)
             }

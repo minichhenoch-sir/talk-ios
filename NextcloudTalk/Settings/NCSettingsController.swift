@@ -423,6 +423,7 @@ public class NCSettingsController: NSObject {
 
         let extSignalingController = self.externalSignalingController(forAccountId: removingAccount.accountId)
         extSignalingController?.disconnect()
+        ChatAudioPlayer.shared.removeAccount(withAccountId: removingAccount.accountId)
         NCAPIController.sharedInstance().removeProfileImage(forAccount: removingAccount)
         NCAPIController.sharedInstance().removeAPISessionManager(forAccount: removingAccount)
         NCDatabaseManager.sharedInstance().removeAccount(withAccountId: removingAccount.accountId)

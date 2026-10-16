@@ -16,6 +16,7 @@ public class NCMessageFileParameter: NCMessageParameter {
     public var width: Int = 0
     public var height: Int = 0
     public var blurhash: String?
+    public var etag: String?
 
     override init?(dictionary dict: [String: Any]?) {
         super.init(dictionary: dict)
@@ -31,6 +32,7 @@ public class NCMessageFileParameter: NCMessageParameter {
         self.height = dict?[intForKey: "height"] ?? 0
 
         self.blurhash = dict?["blurhash"] as? String
+        self.etag = dict?["etag"] as? String
 
         if let fileId = dict?["fileId"] as? String, let fileName = dict?["fileName"] as? String,
            let filePath = dict?["filePath"] as? String, let fileLocalPath = dict?["fileLocalPath"] as? String {
